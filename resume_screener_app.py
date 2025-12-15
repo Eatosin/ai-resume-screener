@@ -95,3 +95,5 @@ if st.button("🔍 Screen Resumes", type="primary"):
                 st.divider()
     else:
         st.warning("Add a job description and at least one resume.")
+
+st.caption("Powered by Hugging Face API (Mistral-7B). Ethical/fair use only – December 16, 2025.")
