@@ -14,11 +14,7 @@ Physics Graduate | AI Prompt Engineer | Content Creator
 This standalone project showcases prompt engineering, PDF processing, automation, and ethical AI—perfect for AI Trainer / data annotation roles.
 
 ## Live Demo (Recommended)
-Deploy free on Streamlit Community Cloud:
-1. Go to https://streamlit.io/cloud
-2. Connect this GitHub repo
-3. Deploy → Get a public link (e.g., `https://ai-resume-screener.streamlit.app`)
-4. Add the link here in README for instant demo!
+loading...
 
 ## Features
 - Upload Job Description (text area)
