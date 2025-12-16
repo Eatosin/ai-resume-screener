@@ -3,60 +3,71 @@ from PyPDF2 import PdfReader
 from huggingface_hub import InferenceClient
 import json
 
-client = InferenceClient()  # Free, no API key for public models
+client = InferenceClient()  # Free public API
 
 def extract_text_from_pdf(file):
     try:
         reader = PdfReader(file)
         text = ""
         for page in reader.pages:
-            text += page.extract_text() + "\n"
-        return text.strip()
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+        return text.strip() or "No text extracted from PDF."
     except Exception as e:
-        return f"Error extracting PDF: {str(e)}"
+        return f"PDF extraction error: {str(e)}"
 
 def screen_resumes(jd_text, resume_texts):
-    prompt_template = """
+    prompt_start = """
     [INST] You are a fair, expert recruiter screening blindly (ignore names, gender, age, personal details).
-    Job Description: {jd}
+    Job Description: 
+    """
+    prompt_jd = jd_text
+    
+    prompt_middle = """
     
     For each resume, output ONLY valid JSON like:
     [{"resume_id": 1, "overall_score": 0-100, "explanation": "2-3 sentences on fit", "strengths": ["item1", "item2"], "gaps": ["item1", "item2"]}, ...]
     
     Resumes:
-    {resumes}
-    [/INST]
     """
     
     formatted_resumes = ""
     for i, text in enumerate(resume_texts):
-        formatted_resumes += f"Resume {i+1}:\n{text[:3500]}\n\n"  # Safe truncation
+        formatted_resumes += f"Resume {i+1}:\n{text[:3000]}\n\n"  # Truncate safely
     
-    full_prompt = prompt_template.format(jd=jd_text, resumes=formatted_resumes)
+    prompt_end = "[/INST]"
+    
+    full_prompt = f"{prompt_start}{prompt_jd}{prompt_middle}{formatted_resumes}{prompt_end}"
     
     with st.spinner("AI screening via Hugging Face API..."):
         try:
             raw_output = client.text_generation(
                 full_prompt,
                 model="mistralai/Mistral-7B-Instruct-v0.2",
-                max_new_tokens=1000,
-                temperature=0.3
+                max_new_tokens=1200,
+                temperature=0.3,
+                stop_sequences=["[/INST]"]  # Prevent extra text
             )
         except Exception as e:
-            return [{"error": f"API call failed: {str(e)}"}]
+            return [{"error": f"API error: {str(e)} (try shorter JD/resumes)"}]
     
-    # Extract and parse JSON
+    # Robust JSON extract
     try:
         start = raw_output.find("[")
+        if start == -1:
+            raise ValueError("No JSON array found")
         end = raw_output.rfind("]") + 1
         json_str = raw_output[start:end]
         results = json.loads(json_str)
+        if not isinstance(results, list):
+            raise ValueError("Not a list")
     except Exception as e:
-        results = [{"error": f"JSON parse failed: {str(e)}", "raw": raw_output}]
+        results = [{"error": f"Parse failed: {str(e)}", "raw_output": raw_output[:1000]}]  # Truncate raw for display
     
     return results
 
-# UI
+# UI (unchanged, minor polish)
 st.set_page_config(page_title="AI Resume Screener", layout="centered")
 st.title("🚀 AI Resume Screener App")
 st.markdown("Simple, fair, explainable screening powered by LLMs – by Owadokun Tosin Tobi")
@@ -70,23 +81,26 @@ uploaded_resumes = st.file_uploader(
 )
 
 if st.button("🔍 Screen Resumes", type="primary"):
-    if jd_text and uploaded_resumes:
-        with st.spinner("Extracting text..."):
+    if jd_text.strip() and uploaded_resumes:
+        with st.spinner("Extracting text from PDFs..."):
             resume_texts = [extract_text_from_pdf(f) for f in uploaded_resumes]
+            if any("error" in text.lower() for text in resume_texts):
+                st.error("PDF read issue—try clearer scans.")
         
-        results = screen_resumes(jd_text, resume_texts)
+        results = screen_resumes(jd_text.strip(), resume_texts)
         
         st.success("Screening Complete!")
         
-        # Sort by score if no error
         if "error" not in results[0]:
             results = sorted(results, key=lambda x: x.get("overall_score", 0), reverse=True)
         
         for res in results:
             if "error" in res:
-                st.error("Issue with output:")
-                if "raw" in res:
-                    st.code(res["raw"])
+                st.error("Screening Issue:")
+                if "raw_output" in res:
+                    st.code(res["raw_output"])
+                else:
+                    st.write(res["error"])
             else:
                 st.markdown(f"### Resume {res['resume_id']} – **Score: {res['overall_score']}/100**")
                 st.write("**Explanation**: " + res["explanation"])
@@ -94,6 +108,6 @@ if st.button("🔍 Screen Resumes", type="primary"):
                 st.write("**Gaps**: " + ", ".join(res["gaps"]))
                 st.divider()
     else:
-        st.warning("Add a job description and at least one resume.")
+        st.warning("Add a job description and at least one resume PDF.")
 
-st.caption("Powered by Hugging Face API (Mistral-7B). Ethical/fair use only – December 16, 2025.")
+st.caption("Hugging Face API (Mistral-7B) – Free tier may rate-limit heavy use. Your resume PDF works great for testing!")
