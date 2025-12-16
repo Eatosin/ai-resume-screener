@@ -2,8 +2,15 @@ import streamlit as st
 from PyPDF2 import PdfReader
 from huggingface_hub import InferenceClient
 import json
+import os
 
-client = InferenceClient()  # Free public API
+# Use token from secrets (free HF token required for reliable Mistral)
+hf_token = st.secrets.get("HF_TOKEN") or os.getenv("HF_TOKEN")
+if not hf_token:
+    st.error("Add your free Hugging Face token in Streamlit Secrets as 'HF_TOKEN' for reliable API access. Get at huggingface.co/settings/tokens")
+    st.stop()
+
+client = InferenceClient(token=hf_token)
 
 def extract_text_from_pdf(file):
     try:
@@ -13,81 +20,71 @@ def extract_text_from_pdf(file):
             page_text = page.extract_text()
             if page_text:
                 text += page_text + "\n"
-        return text.strip() or "No text extracted from PDF."
+        return text.strip() or "No text extracted."
     except Exception as e:
-        return f"PDF extraction error: {str(e)}"
+        return f"PDF error: {str(e)}"
 
 def screen_resumes(jd_text, resume_texts):
     prompt_start = """
-    [INST] You are a fair, expert recruiter screening blindly (ignore names, gender, age, personal details).
+    [INST] You are a fair recruiter screening blindly (no names/gender/age bias).
     Job Description: 
     """
-    prompt_jd = jd_text
+    prompt_jd = jd_text.strip()
     
     prompt_middle = """
     
-    For each resume, output ONLY valid JSON like:
-    [{"resume_id": 1, "overall_score": 0-100, "explanation": "2-3 sentences on fit", "strengths": ["item1", "item2"], "gaps": ["item1", "item2"]}, ...]
+    Output ONLY valid JSON array:
+    [{"resume_id": 1, "overall_score": 0-100, "explanation": "2-3 sentences fit", "strengths": ["item1"], "gaps": ["item1"]}, ...]
     
     Resumes:
     """
     
     formatted_resumes = ""
     for i, text in enumerate(resume_texts):
-        formatted_resumes += f"Resume {i+1}:\n{text[:3000]}\n\n"  # Truncate safely
+        formatted_resumes += f"Resume {i+1} (truncated):\n{text[:2500]}\n\n"  # Shorter for API limits
     
     prompt_end = "[/INST]"
     
     full_prompt = f"{prompt_start}{prompt_jd}{prompt_middle}{formatted_resumes}{prompt_end}"
     
-    with st.spinner("AI screening via Hugging Face API..."):
+    with st.spinner("Screening via Hugging Face (Mistral-7B)..."):
         try:
             raw_output = client.text_generation(
                 full_prompt,
                 model="mistralai/Mistral-7B-Instruct-v0.2",
-                max_new_tokens=1200,
-                temperature=0.3,
-                stop_sequences=["[/INST]"]  # Prevent extra text
+                max_new_tokens=1000,
+                temperature=0.3
             )
         except Exception as e:
-            return [{"error": f"API error: {str(e)} (try shorter JD/resumes)"}]
+            return [{"error": f"API issue: {str(e)} – Try shorter JD/resume or check token"}]
     
-    # Robust JSON extract
     try:
         start = raw_output.find("[")
         if start == -1:
-            raise ValueError("No JSON array found")
+            raise ValueError("No JSON found")
         end = raw_output.rfind("]") + 1
         json_str = raw_output[start:end]
         results = json.loads(json_str)
-        if not isinstance(results, list):
-            raise ValueError("Not a list")
     except Exception as e:
-        results = [{"error": f"Parse failed: {str(e)}", "raw_output": raw_output[:1000]}]  # Truncate raw for display
+        results = [{"error": f"Parse issue: {str(e)}", "raw": raw_output[:800]}]
     
     return results
 
-# UI (unchanged, minor polish)
+# UI
 st.set_page_config(page_title="AI Resume Screener", layout="centered")
 st.title("🚀 AI Resume Screener App")
-st.markdown("Simple, fair, explainable screening powered by LLMs – by Owadokun Tosin Tobi")
+st.markdown("Fair, explainable LLM screening – by Owadokun Tosin Tobi")
 
-jd_text = st.text_area("Job Description (required)", height=150, placeholder="Paste full JD here... e.g., AI Trainer role requiring prompt engineering, content creation...")
+jd_text = st.text_area("Job Description (required)", height=150, placeholder="Paste JD...")
 
-uploaded_resumes = st.file_uploader(
-    "Upload Resume PDFs (multiple OK)",
-    type="pdf",
-    accept_multiple_files=True
-)
+uploaded_resumes = st.file_uploader("Upload Resume PDFs", type="pdf", accept_multiple_files=True)
 
 if st.button("🔍 Screen Resumes", type="primary"):
     if jd_text.strip() and uploaded_resumes:
-        with st.spinner("Extracting text from PDFs..."):
+        with st.spinner("Extracting PDFs..."):
             resume_texts = [extract_text_from_pdf(f) for f in uploaded_resumes]
-            if any("error" in text.lower() for text in resume_texts):
-                st.error("PDF read issue—try clearer scans.")
         
-        results = screen_resumes(jd_text.strip(), resume_texts)
+        results = screen_resumes(jd_text, resume_texts)
         
         st.success("Screening Complete!")
         
@@ -96,9 +93,9 @@ if st.button("🔍 Screen Resumes", type="primary"):
         
         for res in results:
             if "error" in res:
-                st.error("Screening Issue:")
-                if "raw_output" in res:
-                    st.code(res["raw_output"])
+                st.error("Issue:")
+                if "raw" in res:
+                    st.code(res["raw"])
                 else:
                     st.write(res["error"])
             else:
@@ -108,6 +105,6 @@ if st.button("🔍 Screen Resumes", type="primary"):
                 st.write("**Gaps**: " + ", ".join(res["gaps"]))
                 st.divider()
     else:
-        st.warning("Add a job description and at least one resume PDF.")
+        st.warning("Add JD + resumes.")
 
-st.caption("Hugging Face API (Mistral-7B) – Free tier may rate-limit heavy use. Your resume PDF works great for testing!")
+st.caption("Hugging Face Mistral-7B (free tier with token) – Dec 16, 2025. Your resume PDF tested great!")
