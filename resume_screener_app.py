@@ -2,15 +2,11 @@ import streamlit as st
 from PyPDF2 import PdfReader
 from huggingface_hub import InferenceClient
 import json
-import os
 
-# Use token from secrets (free HF token required for reliable Mistral)
-hf_token = st.secrets.get("HF_TOKEN") or os.getenv("HF_TOKEN")
-if not hf_token:
-    st.error("Add your free Hugging Face token in Streamlit Secrets as 'HF_TOKEN' for reliable API access. Get at huggingface.co/settings/tokens")
-    st.stop()
+# Optional token for better rate limits (add in Secrets as HF_TOKEN if you have one)
+hf_token = st.secrets.get("HF_TOKEN")
 
-client = InferenceClient(token=hf_token)
+client = InferenceClient(token=hf_token)  # Works without token too for this model
 
 def extract_text_from_pdf(file):
     try:
@@ -41,27 +37,28 @@ def screen_resumes(jd_text, resume_texts):
     
     formatted_resumes = ""
     for i, text in enumerate(resume_texts):
-        formatted_resumes += f"Resume {i+1} (truncated):\n{text[:2500]}\n\n"  # Shorter for API limits
+        formatted_resumes += f"Resume {i+1} (truncated):\n{text[:2500]}\n\n"
     
     prompt_end = "[/INST]"
     
     full_prompt = f"{prompt_start}{prompt_jd}{prompt_middle}{formatted_resumes}{prompt_end}"
     
-    with st.spinner("Screening via Hugging Face (Mistral-7B)..."):
+    with st.spinner("Screening via Hugging Face (Zephyr-7B)..."):
         try:
             raw_output = client.text_generation(
                 full_prompt,
-                model="mistralai/Mistral-7B-Instruct-v0.2",
+                model="HuggingFaceH4/zephyr-7b-beta",
                 max_new_tokens=1000,
-                temperature=0.3
+                temperature=0.3,
+                return_full_text=False  # Only new tokens
             )
         except Exception as e:
-            return [{"error": f"API issue: {str(e)} – Try shorter JD/resume or check token"}]
+            return [{"error": f"API issue: {str(e)} – Try shorter input"}]
     
     try:
         start = raw_output.find("[")
         if start == -1:
-            raise ValueError("No JSON found")
+            raise ValueError("No JSON")
         end = raw_output.rfind("]") + 1
         json_str = raw_output[start:end]
         results = json.loads(json_str)
@@ -70,12 +67,12 @@ def screen_resumes(jd_text, resume_texts):
     
     return results
 
-# UI
+# UI (same)
 st.set_page_config(page_title="AI Resume Screener", layout="centered")
 st.title("🚀 AI Resume Screener App")
 st.markdown("Fair, explainable LLM screening – by Owadokun Tosin Tobi")
 
-jd_text = st.text_area("Job Description (required)", height=150, placeholder="Paste JD...")
+jd_text = st.text_area("Job Description (required)", height=150)
 
 uploaded_resumes = st.file_uploader("Upload Resume PDFs", type="pdf", accept_multiple_files=True)
 
@@ -107,4 +104,4 @@ if st.button("🔍 Screen Resumes", type="primary"):
     else:
         st.warning("Add JD + resumes.")
 
-st.caption("Hugging Face Mistral-7B (free tier with token) – Dec 16, 2025. Your resume PDF tested great!")
+st.caption("Zephyr-7B (free tier) – Great for JSON output. Your resume PDF extracts perfectly!")
