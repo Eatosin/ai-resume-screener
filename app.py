@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 # --- SETUP ---
 st.set_page_config(page_title="TalentAlign AI", layout="wide", page_icon="👔")
 
-# Load API Key (Cloud or Local)
+# Load API Key
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     load_dotenv()
@@ -17,6 +17,9 @@ if not api_key:
 
 # --- FUNCTIONS ---
 def extract_text_from_pdf(file):
+    """
+    Extracts text from PDF. Returns None if text is too short (likely scanned/image).
+    """
     try:
         reader = PdfReader(file)
         text = ""
@@ -24,6 +27,11 @@ def extract_text_from_pdf(file):
             content = page.extract_text()
             if content:
                 text += content + "\n"
+        
+        # Validation: Scanned PDFs often return empty strings or gibberish
+        if len(text.strip()) < 50:
+            return None
+            
         return text.strip()
     except Exception as e:
         return None
@@ -36,13 +44,10 @@ def analyze_resumes(jd, resumes, blind_mode=False):
     
     # Robust Model Selection
     try:
-        # Try SOTA first
         model = genai.GenerativeModel('gemini-2.5-flash', generation_config={"response_mime_type": "application/json"})
     except:
-        # Fallback to Pro if 2.5 isn't available on key
         model = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
 
-    # The Prompt
     prompt = f"""
     You are an Expert Technical Recruiter.
     
@@ -102,20 +107,29 @@ if st.button("🚀 Screen Candidates", type="primary"):
     else:
         with st.spinner("Extracting text and analyzing profiles..."):
             valid_resumes = []
+            failed_files = []
+            
+            # Robust Extraction Loop
             for file in uploaded_files:
                 text = extract_text_from_pdf(file)
-                if text and len(text) > 50:
+                if text:
                     valid_resumes.append({"name": file.name, "text": text})
+                else:
+                    failed_files.append(file.name)
+            
+            # Error Reporting (The P1 Fix)
+            if failed_files:
+                st.warning(f"⚠️ Unable to read text from: {', '.join(failed_files)}. These may be scanned images.")
             
             if not valid_resumes:
-                st.error("No valid text found. Are they scanned images?")
+                st.error("No valid text found in any uploaded resumes.")
             else:
                 results = analyze_resumes(jd_input, valid_resumes, blind_mode)
                 
                 if "error" in results:
                     st.error(results['error'])
                 else:
-                    st.success("Analysis Complete!")
+                    st.success(f"Analyzed {len(valid_resumes)} candidates successfully!")
                     
                     # Scoreboard
                     df = pd.DataFrame(results)
@@ -126,7 +140,7 @@ if st.button("🚀 Screen Candidates", type="primary"):
                             hide_index=True
                         )
                         
-                        # Cards
+                        # Detailed Cards
                         st.markdown("---")
                         for cand in sorted(results, key=lambda x: x.get('match_score', 0), reverse=True):
                             with st.expander(f"{cand.get('match_score', 0)}% - {cand.get('name', 'Unknown')}"):
